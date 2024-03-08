@@ -3,6 +3,7 @@
 #include <libudev.h>
 #include <linux/input.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define POLLIN 0x001  /* There is data to read.  */
@@ -95,25 +96,13 @@ exit:
 }
 
 int main(void) {
-  static struct JoystickInfo joystickInfos[4] = {};
-  u8 joystickCount = 1;
+  struct io_uring_params p = {};
+  p.flags = IORING_SETUP_SQPOLL;
+  p.sq_thread_idle = 1;
 
-  if (enumarateJoysticks(&joystickCount, 0) == 0)
-    return 0;
-
-  if (joystickCount > 4) {
-    printf("too many joysticks\n");
-    return 2;
-  }
-
-  if (enumarateJoysticks(&joystickCount, joystickInfos) == 0)
+  struct io_uring ring;
+  if (io_uring_queue_init_params(4, &ring, &p))
     return 1;
-
-  printf("count: %d\n", joystickCount);
-  for (u8 joystickIndex = 0; joystickIndex < joystickCount; joystickIndex++) {
-    printf("joystick #%u %s\n", joystickIndex,
-           joystickInfos[joystickIndex].path);
-  }
 
   struct udev *udev = udev_new();
   if (!udev)
@@ -135,19 +124,58 @@ int main(void) {
   if (fd_udev < 0)
     return 1;
 
-  struct io_uring ring;
-  struct io_uring_params p = {};
-
-  p.flags = IORING_SETUP_SQPOLL;
-  p.sq_thread_idle = 100;
-  io_uring_queue_init_params(8, &ring, &p);
-
   struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
   io_uring_prep_poll_multishot(sqe, fd_udev, POLLIN);
   io_uring_sqe_set_data(sqe,
                         &(struct op){.type = OP_UDEV_MONITOR, .fd = fd_udev});
 
   io_uring_submit(&ring);
+
+  /* add already connected joysticks to queue */
+  static struct JoystickInfo joystickInfos[4] = {};
+  u8 joystickCount = 1;
+
+  if (enumarateJoysticks(&joystickCount, 0) == 0)
+    return 0;
+
+  if (joystickCount > 4) {
+    printf("too many joysticks\n");
+    return 2;
+  }
+
+  if (enumarateJoysticks(&joystickCount, joystickInfos) == 0)
+    return 1;
+
+  printf("count: %d\n", joystickCount);
+  for (u8 joystickIndex = 0; joystickIndex < joystickCount; joystickIndex++) {
+    printf("joystick #%u %s\n", joystickIndex,
+           joystickInfos[joystickIndex].path);
+    struct op_joystick_read *op = &(struct op_joystick_read){
+        .type = OP_JOYSTICK_READ,
+    };
+
+    op->fd = open(joystickInfos[joystickIndex].path, O_RDONLY);
+    if (op->fd < 0)
+      return 1;
+
+    int flags = fcntl(op->fd, F_GETFL);
+    flags |= O_NONBLOCK;
+    fcntl(op->fd, F_SETFL, flags);
+
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);
+    io_uring_sqe_set_data(sqe, op);
+    io_uring_submit(&ring);
+  }
+
+#define MAX_INPUT_EVENT 1024
+  struct input_event event[MAX_INPUT_EVENT];
+  struct iovec *iovecs = malloc(MAX_INPUT_EVENT * sizeof(*iovecs));
+  for (size_t index = 0; index < MAX_INPUT_EVENT; index++) {
+    struct iovec *iovec = &iovecs[index];
+    iovec->iov_base = &event[index];
+    iovec->iov_len = sizeof(struct input_event);
+  }
 
   struct io_uring_cqe *cqe;
   while (1) {
@@ -157,12 +185,22 @@ int main(void) {
       break;
     }
 
-    if (cqe->res < 0) {
+    struct op *op = io_uring_cqe_get_data(cqe);
+    if (op == 0)
+      goto cqe_seen;
+
+    if (op->type & OP_UDEV_MONITOR && cqe->res < 0) {
       write(2, "err: udev\n", 10);
       break;
     }
 
-    struct op *op = io_uring_cqe_get_data(cqe);
+    if (op->type & OP_JOYSTICK_READ && cqe->res < 0) {
+      if (op->fd >= 0)
+        close(op->fd);
+      op->fd = -1;
+      goto cqe_seen;
+    }
+
     if (op->type & OP_UDEV_MONITOR) {
       int revents = cqe->res;
 
@@ -214,6 +252,10 @@ int main(void) {
         if (op->fd < 0)
           goto cqe_seen;
 
+        int flags = fcntl(op->fd, F_GETFL);
+        flags |= O_NONBLOCK;
+        fcntl(op->fd, F_SETFL, flags);
+
         struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
         io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);
         io_uring_sqe_set_data(sqe, op);
@@ -227,13 +269,6 @@ int main(void) {
 
     else if (op->type & OP_JOYSTICK_READ) {
       struct op_joystick_read *op = io_uring_cqe_get_data(cqe);
-
-      ssize_t bytesRead = cqe->res;
-      if (bytesRead <= 0) {
-        if (op->fd >= 0)
-          close(op->fd);
-        op->fd = -1;
-      }
 
       struct input_event *event = &op->event;
       printf("fd: %d time: %ld.%ld type: %d code: %d value: %d\n", op->fd,
@@ -249,6 +284,8 @@ int main(void) {
   cqe_seen:
     io_uring_cqe_seen(&ring, cqe);
   }
+
+  io_uring_queue_exit(&ring);
 
   return 0;
 }

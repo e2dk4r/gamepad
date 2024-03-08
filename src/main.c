@@ -1,5 +1,6 @@
 #include <liburing.h>
 
+#include <fcntl.h>
 #include <libudev.h>
 #include <linux/input.h>
 #include <stdio.h>
@@ -96,12 +97,8 @@ exit:
 }
 
 int main(void) {
-  struct io_uring_params p = {};
-  p.flags = IORING_SETUP_SQPOLL;
-  p.sq_thread_idle = 1;
-
   struct io_uring ring;
-  if (io_uring_queue_init_params(4, &ring, &p))
+  if (io_uring_queue_init(4, &ring, 0))
     return 1;
 
   struct udev *udev = udev_new();
@@ -189,11 +186,13 @@ int main(void) {
     if (op == 0)
       goto cqe_seen;
 
+    /* on udev monitor error, finish the program */
     if (op->type & OP_UDEV_MONITOR && cqe->res < 0) {
       write(2, "err: udev\n", 10);
       break;
     }
 
+    /* on joystick read error (eg. joystick removed), close the fd */
     if (op->type & OP_JOYSTICK_READ && cqe->res < 0) {
       if (op->fd >= 0)
         close(op->fd);
@@ -201,6 +200,7 @@ int main(void) {
       goto cqe_seen;
     }
 
+    /* on udev events */
     if (op->type & OP_UDEV_MONITOR) {
       int revents = cqe->res;
 
@@ -253,10 +253,14 @@ int main(void) {
           goto cqe_seen;
 
         int flags = fcntl(op->fd, F_GETFL);
+        if (flags < 0)
+          goto cqe_seen;
         flags |= O_NONBLOCK;
-        fcntl(op->fd, F_SETFL, flags);
+        flags = fcntl(op->fd, F_SETFL, flags);
+        if (flags < 0)
+          goto cqe_seen;
 
-        struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+        sqe = io_uring_get_sqe(&ring);
         io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);
         io_uring_sqe_set_data(sqe, op);
         io_uring_submit(&ring);
@@ -272,7 +276,7 @@ int main(void) {
 
       struct input_event *event = &op->event;
       printf("fd: %d time: %ld.%ld type: %d code: %d value: %d\n", op->fd,
-             event->time.tv_sec, event->time.tv_usec, event->type, event->code,
+             event->input_event_sec, event->input_event_usec, event->type, event->code,
              event->value);
 
       struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);

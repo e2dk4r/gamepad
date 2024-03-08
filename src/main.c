@@ -244,12 +244,16 @@ int main(void) {
           goto cqe_seen;
 
         int flags = fcntl(op->fd, F_GETFL);
-        if (flags < 0)
+        if (flags < 0) {
+          close(op->fd);
           goto cqe_seen;
+        }
         flags |= O_NONBLOCK;
         flags = fcntl(op->fd, F_SETFL, flags);
-        if (flags < 0)
+        if (flags < 0) {
+          close(op->fd);
           goto cqe_seen;
+        }
 
         sqe = io_uring_get_sqe(&ring);
         io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);

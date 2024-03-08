@@ -4,7 +4,6 @@
 #include <libudev.h>
 #include <linux/input.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define POLLIN 0x001  /* There is data to read.  */
@@ -12,6 +11,8 @@
 #define POLLOUT 0x004 /* Writing now will not block.  */
 
 typedef unsigned char u8;
+typedef unsigned int u32;
+typedef unsigned long long u64;
 
 #define OP_UDEV_MONITOR (1 << 0)
 #define OP_JOYSTICK_POLL (1 << 1)
@@ -31,7 +32,9 @@ struct op_joystick {
 
 struct op_joystick_read {
   u8 type;
+  u8 initialized : 1;
   int fd;
+  u32 connectedAt;
   struct input_event event;
 };
 
@@ -149,6 +152,8 @@ int main(void) {
            joystickInfos[joystickIndex].path);
     struct op_joystick_read *op = &(struct op_joystick_read){
         .type = OP_JOYSTICK_READ,
+        /* already initialized */
+        .initialized = 1,
     };
 
     op->fd = open(joystickInfos[joystickIndex].path, O_RDONLY);
@@ -268,13 +273,24 @@ int main(void) {
 
     else if (op->type & OP_JOYSTICK_READ) {
       struct op_joystick_read *op = io_uring_cqe_get_data(cqe);
-
       struct input_event *event = &op->event;
-      printf("fd: %d time: %ld.%ld type: %d code: %d value: %d\n", op->fd,
-             event->input_event_sec, event->input_event_usec, event->type, event->code,
-             event->value);
 
-      struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+      /* wait 1 second for joystick to become ready */
+      if (!op->initialized) {
+        if (op->connectedAt == 0)
+          op->connectedAt = (u32)event->input_event_sec;
+        if ((u32)event->input_event_sec - op->connectedAt >= 1)
+          op->initialized = 1;
+        goto readAgain;
+      }
+
+      printf("fd: %d time: %ld.%ld type: %d code: %d value: %d\n", op->fd,
+             event->input_event_sec, event->input_event_usec, event->type,
+             event->code, event->value);
+
+      struct io_uring_sqe *sqe;
+    readAgain:
+      sqe = io_uring_get_sqe(&ring);
       io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);
       io_uring_sqe_set_data(sqe, op);
       io_uring_submit(&ring);

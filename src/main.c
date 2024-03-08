@@ -165,15 +165,6 @@ int main(void) {
     io_uring_submit(&ring);
   }
 
-#define MAX_INPUT_EVENT 1024
-  struct input_event event[MAX_INPUT_EVENT];
-  struct iovec *iovecs = malloc(MAX_INPUT_EVENT * sizeof(*iovecs));
-  for (size_t index = 0; index < MAX_INPUT_EVENT; index++) {
-    struct iovec *iovec = &iovecs[index];
-    iovec->iov_base = &event[index];
-    iovec->iov_len = sizeof(struct input_event);
-  }
-
   struct io_uring_cqe *cqe;
   while (1) {
     int error = io_uring_wait_cqe(&ring, &cqe);

@@ -180,13 +180,9 @@ int main(void) {
           .initialized = 1,
       };
 
-      op->fd = open(devnode, O_RDONLY);
+      op->fd = open(devnode, O_RDONLY | O_NONBLOCK);
       if (op->fd < 0)
         return 1;
-
-      int flags = fcntl(op->fd, F_GETFL);
-      flags |= O_NONBLOCK;
-      fcntl(op->fd, F_SETFL, flags);
 
       struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
       io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);
@@ -281,20 +277,8 @@ int main(void) {
             .type = OP_JOYSTICK_READ,
         };
 
-        op->fd = open(devnode, O_RDONLY);
+        op->fd = open(devnode, O_RDONLY | O_NONBLOCK);
         if (op->fd < 0) {
-          goto op_monitor_exit;
-        }
-
-        int flags = fcntl(op->fd, F_GETFL);
-        if (flags < 0) {
-          close(op->fd);
-          goto op_monitor_exit;
-        }
-        flags |= O_NONBLOCK;
-        flags = fcntl(op->fd, F_SETFL, flags);
-        if (flags < 0) {
-          close(op->fd);
           goto op_monitor_exit;
         }
 

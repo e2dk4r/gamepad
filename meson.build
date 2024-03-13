@@ -12,7 +12,7 @@ add_project_arguments([
   language: 'c'
 )
 
-libudev = dependency('libudev')
+libevdev = dependency('libevdev')
 liburing = dependency('liburing')
 
 sources = files([
@@ -23,7 +23,7 @@ executable(
   'gamepad',
   sources: sources,
   dependencies: [
-    libudev,
+    libevdev,
     liburing,
   ],
 )

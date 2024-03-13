@@ -8,6 +8,10 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 
+#ifndef DT_CHR
+#define DT_CHR 2
+#endif
+
 #define POLLIN 0x001  /* There is data to read.  */
 #define POLLPRI 0x002 /* There is urgent data to read.  */
 #define POLLOUT 0x004 /* Writing now will not block.  */

@@ -176,8 +176,13 @@ int main(void) {
   /* event loop */
   struct io_uring_cqe *cqe;
   while (1) {
-    int error = io_uring_wait_cqe(&ring, &cqe);
+    int error;
+
+wait:
+    error = io_uring_wait_cqe(&ring, &cqe);
     if (error) {
+      if (errno == EAGAIN)
+        goto wait;
       fatal("io_uring\n");
       error_code = GAMEPAD_ERROR_IO_URING_WAIT;
       break;

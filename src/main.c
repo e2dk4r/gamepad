@@ -260,7 +260,7 @@ int main(void) {
       struct __kernel_timespec *ts = &(struct __kernel_timespec){
           .tv_nsec = 75000000, /* 750ms */
       };
-      io_uring_prep_timeout(sqe, ts, 1, IORING_TIMEOUT_ETIME_SUCCESS);
+      io_uring_prep_timeout(sqe, ts, 1, 0);
       io_uring_sqe_set_data(sqe, op);
       io_uring_submit(&ring);
     }

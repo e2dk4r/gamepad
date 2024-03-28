@@ -304,6 +304,7 @@ int main(void) {
         libevdev_free(evdev);
       sqe = io_uring_get_sqe(&ring);
       io_uring_prep_close(sqe, op->fd);
+      io_uring_sqe_set_data(sqe, 0);
       io_uring_submit(&ring);
     }
 
@@ -316,6 +317,7 @@ int main(void) {
         warning("cannot read events from device. maybe disconnected?\n");
         sqe = io_uring_get_sqe(&ring);
         io_uring_prep_close(sqe, op->fd);
+        io_uring_sqe_set_data(sqe, 0);
         io_uring_submit(&ring);
         goto cqe_seen;
       }

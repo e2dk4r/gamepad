@@ -6,6 +6,7 @@
 #include <linux/input.h>
 #include <stdio.h>
 #include <sys/inotify.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #ifndef DT_CHR
@@ -217,8 +218,15 @@ wait:
         break;
       }
 
-      /* note: reading one inotify_event (16 bytes) fails */
-      u8 buf[32];
+      /*
+       * get the number of bytes available to read from an
+       * inotify file descriptor.
+       * see: inotify(7)
+       */
+      u32 bufsz;
+      ioctl(op->fd, FIONREAD, &bufsz);
+
+      u8 buf[bufsz];
       ssize_t readBytes = read(op->fd, buf, sizeof(buf));
       if (readBytes < 0) {
         goto cqe_seen;

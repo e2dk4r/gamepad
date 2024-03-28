@@ -23,9 +23,10 @@ typedef unsigned int u32;
 typedef unsigned long long u64;
 
 #define OP_INOTIFY_WATCH (1 << 0)
-#define OP_JOYSTICK_POLL (1 << 1)
-#define OP_JOYSTICK_READ (1 << 2)
-#define OP_JOYSTICK_CLOSE (1 << 3)
+#define OP_DEVICE_OPEN (1 << 1)
+#define OP_JOYSTICK_POLL (1 << 2)
+#define OP_JOYSTICK_READ (1 << 3)
+#define OP_JOYSTICK_CLOSE (1 << 4)
 
 #define ACTION_ADD (1 << 0)
 #define ACTION_REMOVE (1 << 1)
@@ -52,9 +53,8 @@ struct op {
   int fd;
 };
 
-struct op_joystick {
+struct op_device_open {
   u8 type;
-  int fd;
   const char *path;
 };
 
@@ -179,7 +179,7 @@ int main(void) {
   while (1) {
     int error;
 
-wait:
+  wait:
     error = io_uring_wait_cqe(&ring, &cqe);
     if (error) {
       if (errno == EAGAIN)
@@ -236,12 +236,6 @@ wait:
       if (event->len <= 0)
         goto cqe_seen;
 
-      u8 action = 0;
-      if (event->mask & IN_CREATE)
-        action = ACTION_ADD;
-      else if (event->mask & IN_DELETE)
-        action = ACTION_REMOVE;
-
       if (event->mask & IN_ISDIR)
         goto cqe_seen;
 
@@ -251,51 +245,54 @@ wait:
         *dest = *src;
       }
 
-      printf("--> %d %s %s\n", action, event->name, path);
+      printf("--> %d %s %s\n", event->mask, event->name, path);
 
-      if (action & ACTION_REMOVE)
+      if (event->mask & IN_DELETE)
         goto cqe_seen;
+
+      struct op_device_open *op = &(struct op_device_open){
+          .type = OP_DEVICE_OPEN,
+          .path = path,
+      };
+
+      /* wait for device initialization */
+      sqe = io_uring_get_sqe(&ring);
+      struct __kernel_timespec *ts = &(struct __kernel_timespec){
+          .tv_nsec = 75000000, /* 750ms */
+      };
+      io_uring_prep_timeout(sqe, ts, 1, IORING_TIMEOUT_ETIME_SUCCESS);
+      io_uring_sqe_set_data(sqe, op);
+      io_uring_submit(&ring);
+    }
+
+    if (op->type & OP_DEVICE_OPEN) {
+      if (cqe->res < 0 && cqe->res != -ETIME) {
+        warning("waiting for device initialiation failed\n");
+        goto cqe_seen;
+      }
+      struct op_device_open *currentOp = (struct op_device_open *)op;
 
       struct op_joystick_read *op = &(struct op_joystick_read){
           .type = OP_JOYSTICK_READ,
       };
 
-      /* try loop for opening file until is ready.
-       *
-       * if we try to open file that is not ready,
-       * we get errno 13 EACCESS.
-       */
-      u32 try = 1 << 17;
-      while (1) {
-        if (try == 0) {
-          warning("open failed\n");
-          goto cqe_seen;
-        }
-
-        op->fd = open(path, O_RDONLY | O_NONBLOCK);
-        if (op->fd >= 0) {
-          break;
-        }
-
-        try--;
+      op->fd = open(currentOp->path, O_RDONLY | O_NONBLOCK);
+      if (op->fd < 0) {
+        warning("opening device failed\n");
+        goto cqe_seen;
       }
 
       struct libevdev *evdev;
       int rc = libevdev_new_from_fd(op->fd, &evdev);
       if (rc < 0) {
         warning("libevdev failed\n");
-        close(op->fd);
-        if (evdev)
-          libevdev_free(evdev);
-        goto cqe_seen;
+        goto error;
       }
 
       /* detect joystick */
       if (!libevdev_is_joystick(evdev)) {
         warning("This device does not look like a joystick\n");
-        close(op->fd);
-        libevdev_free(evdev);
-        goto cqe_seen;
+        goto error;
       }
 
       printf("Input device name: \"%s\"\n", libevdev_get_name(evdev));
@@ -309,16 +306,35 @@ wait:
       io_uring_submit(&ring);
 
       libevdev_free(evdev);
+      goto cqe_seen;
+
+    error:
+      if (evdev)
+        libevdev_free(evdev);
+      sqe = io_uring_get_sqe(&ring);
+      io_uring_prep_close(sqe, op->fd);
+      io_uring_sqe_set_data(sqe, op);
+      io_uring_submit(&ring);
     }
 
     else if (op->type & OP_JOYSTICK_READ) {
       struct op_joystick_read *op = io_uring_cqe_get_data(cqe);
       struct input_event *event = &op->event;
 
+      if (cqe->res < 0) {
+        warning("cannot read events from device. maybe disconnected?\n");
+        sqe = io_uring_get_sqe(&ring);
+        io_uring_prep_close(sqe, op->fd);
+        io_uring_sqe_set_data(sqe, op);
+        io_uring_submit(&ring);
+        goto cqe_seen;
+      }
+
       printf("fd: %d time: %ld.%ld type: %d code: %d value: %d\n", op->fd,
              event->input_event_sec, event->input_event_usec, event->type,
              event->code, event->value);
 
+      /* read event again from gamepad device */
       sqe = io_uring_get_sqe(&ring);
       io_uring_prep_read(sqe, op->fd, &op->event, sizeof(op->event), 0);
       io_uring_sqe_set_data(sqe, op);

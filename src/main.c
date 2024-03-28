@@ -193,25 +193,16 @@ int main(void) {
     if (op == 0)
       goto cqe_seen;
 
-    /* on inotify watch error, finish the program */
-    if (op->type & OP_INOTIFY_WATCH && cqe->res < 0) {
-      fatal("inotify watch\n");
-      error_code = GAMEPAD_ERROR_INOTIFY_WATCH;
-      break;
-    }
-
-    /* on joystick read error (eg. joystick removed), close the fd */
-    if (op->type & OP_JOYSTICK_READ && cqe->res < 0) {
-      if (op->fd >= 0)
-        close(op->fd);
-      op->fd = -1;
-      goto cqe_seen;
-    }
-
     /* on inotify events */
     if (op->type & OP_INOTIFY_WATCH) {
-      int revents = cqe->res;
+      /* on error, finish the program */
+      if (cqe->res < 0) {
+        fatal("inotify watch\n");
+        error_code = GAMEPAD_ERROR_INOTIFY_WATCH;
+        break;
+      }
 
+      int revents = cqe->res;
       if (!(revents & POLLIN)) {
         fatal("inotify\n");
         error_code = GAMEPAD_ERROR_INOTIFY_WATCH_POLL;
@@ -265,7 +256,7 @@ int main(void) {
       io_uring_submit(&ring);
     }
 
-    if (op->type & OP_DEVICE_OPEN) {
+    else if (op->type & OP_DEVICE_OPEN) {
       if (cqe->res < 0 && cqe->res != -ETIME) {
         warning("waiting for device initialiation failed\n");
         goto cqe_seen;
@@ -320,6 +311,7 @@ int main(void) {
       struct op_joystick_read *op = io_uring_cqe_get_data(cqe);
       struct input_event *event = &op->event;
 
+      /* on joystick read error (eg. joystick removed), close the fd */
       if (cqe->res < 0) {
         warning("cannot read events from device. maybe disconnected?\n");
         sqe = io_uring_get_sqe(&ring);

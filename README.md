@@ -25,3 +25,4 @@ ninja -C build
 - see https://www.kernel.org/doc/Documentation/input/gamepad.txt
 - see the key codes included in `/usr/include/linux/input-event-codes.h`
 - see https://unixism.net/loti/tutorial/index.html for liburing examples
+- if you have libinput on your system, see `man libinput-record(1)` for debugging input events

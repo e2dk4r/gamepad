@@ -4,6 +4,13 @@ This is simple example for detecting gamepad inputs using `liburing` and `libevd
 
 For more concrete example see [src/handmadehero_linux.c](https://github.com/e2dk4r/handmadehero/blob/0033e92f90ae6297ce1a281694cd39302f47c206/src/handmadehero_linux.c#L303)
 
+# libraries
+
+| library  | used for                            |
+|----------|-------------------------------------|
+| liburing | event loop and polling              |
+| libevdev | detecting whether device is gamepad |
+
 # build
 
 ```

@@ -1,17 +1,15 @@
-#include <liburing.h>
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 
 #include <dirent.h>
 #include <fcntl.h>
 #include <libevdev/libevdev.h>
+#include <liburing.h>
 #include <linux/input.h>
 #include <stdio.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-
-#ifndef DT_CHR
-#define DT_CHR 2
-#endif
 
 #define POLLIN 0x001  /* There is data to read.  */
 #define POLLPRI 0x002 /* There is urgent data to read.  */

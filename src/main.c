@@ -13,6 +13,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "controllers.h"
+
 #define POLLIN 0x001  /* There is data to read.  */
 #define POLLPRI 0x002 /* There is urgent data to read.  */
 #define POLLOUT 0x004 /* Writing now will not block.  */
@@ -134,6 +136,22 @@ static inline u8 libevdev_is_joystick(struct libevdev *evdev) {
          libevdev_has_event_code(evdev, EV_ABS, ABS_HAT0X);
 }
 
+static inline void PrintInfo(struct libevdev *evdev) {
+  int vendorId = libevdev_get_id_vendor(evdev);
+  int productId = libevdev_get_id_product(evdev);
+  printf("Input device name: \"%s\"\n", libevdev_get_name(evdev));
+  printf("Input device ID: bus %#x vendor %#x product %#x\n",
+         libevdev_get_id_bustype(evdev), vendorId, productId);
+
+  enum ControllerType type = GuessControllerType(vendorId, productId);
+
+  printf("xbox: %d\n", type == ControllerType_XBoxOneController ||
+                           type == ControllerType_XBox360Controller);
+  printf("ps: %d\n", type == ControllerType_PS3Controller ||
+                         type == ControllerType_PS4Controller ||
+                         type == ControllerType_PS5Controller);
+}
+
 int main(void) {
   int error_code = 0;
 
@@ -242,10 +260,7 @@ int main(void) {
       continue;
     }
 
-    printf("Input device name: \"%s\"\n", libevdev_get_name(evdev));
-    printf("Input device ID: bus %#x vendor %#x product %#x\n",
-           libevdev_get_id_bustype(evdev), libevdev_get_id_vendor(evdev),
-           libevdev_get_id_product(evdev));
+    PrintInfo(evdev);
 
     struct op_joystick_read *submitOp =
         mem_chunk_push(MemoryForJoystickReadEvents);
@@ -376,10 +391,7 @@ int main(void) {
         goto error;
       }
 
-      printf("Input device name: \"%s\"\n", libevdev_get_name(evdev));
-      printf("Input device ID: bus %#x vendor %#x product %#x\n",
-             libevdev_get_id_bustype(evdev), libevdev_get_id_vendor(evdev),
-             libevdev_get_id_product(evdev));
+      PrintInfo(evdev);
 
       struct op_joystick_read *submitOp =
           mem_chunk_push(MemoryForJoystickReadEvents);
